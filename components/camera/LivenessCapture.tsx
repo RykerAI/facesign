@@ -40,9 +40,9 @@ function pickChallenges(n = 2): Challenge[] {
 
 type Phase = "loading" | "error" | "align" | "challenge" | "capturing" | "done";
 
-const EAR_BLINK_THRESHOLD = 0.22;
+const EAR_BLINK_THRESHOLD = 0.26;
 const HEAD_TURN_THRESHOLD = 0.15;
-const DETECTION_MS = 120;
+const DETECTION_MS = 60;
 
 export default function LivenessCapture({ onSuccess, onError }: Props) {
   const webcamRef = useRef<Webcam>(null);
