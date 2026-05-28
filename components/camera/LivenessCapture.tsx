@@ -45,15 +45,23 @@ function pickChallenges(): Challenge[] {
 type Phase = "loading" | "error" | "align" | "calibrating" | "challenge" | "capturing" | "done";
 
 // Blink: EAR must drop below this fraction of the calibrated baseline
-const EAR_CLOSED_RATIO = 0.70;
-// Require this many consecutive below-threshold frames before marking eyes as closed
-const EAR_BLINK_FRAMES = 2;
+const EAR_CLOSED_RATIO = 0.78;
+// Consecutive below-threshold frames needed — 1 is fine because we also require reopening
+const EAR_BLINK_FRAMES = 1;
 // Head turn: nose must deviate this far from calibrated baseline (fraction of half-face-width)
 const HEAD_TURN_THRESHOLD = 0.20;
-// Detection polling interval — kept above typical async detection time to avoid overlap
-const DETECTION_MS = 90;
-// Number of frames to sample for baseline calibration (~1.6s at 90ms)
-const CALIBRATION_FRAMES = 18;
+// Detection polling interval
+const DETECTION_MS = 75;
+// Number of frames to sample for baseline calibration (~1.5s at 75ms)
+const CALIBRATION_FRAMES = 20;
+// Hard floor — any EAR below this is definitely a blink, exclude from calibration
+const EAR_BLINK_FLOOR = 0.21;
+
+function median(arr: number[]): number {
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
 export default function LivenessCapture({ onSuccess, onError }: Props) {
   const webcamRef = useRef<Webcam>(null);
@@ -77,6 +85,7 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [completed, setCompleted] = useState<Challenge[]>([]);
   const [calibProgress, setCalibProgress] = useState(0);
+  const [eyeState, setEyeState] = useState<"open" | "closed" | null>(null);
 
   const stopLoop = useCallback(() => {
     if (intervalRef.current) {
@@ -137,8 +146,11 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
 
         if (calibEARs.current.length >= CALIBRATION_FRAMES) {
           clearInterval(id);
-          calibratedEAR.current = calibEARs.current.reduce((a, b) => a + b, 0) / calibEARs.current.length;
-          calibratedNoseRatio.current = calibNoseRatios.current.reduce((a, b) => a + b, 0) / calibNoseRatios.current.length;
+          // Use median of non-blink frames so accidental blinks during calibration
+          // don't drag the baseline down and make the threshold impossible to hit
+          const openEARs = calibEARs.current.filter(e => e > EAR_BLINK_FLOOR);
+          calibratedEAR.current = median(openEARs.length >= 5 ? openEARs : calibEARs.current);
+          calibratedNoseRatio.current = median(calibNoseRatios.current);
 
           consecutiveClosedFrames.current = 0;
           eyesWereClosed.current = false;
@@ -230,7 +242,10 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
         const avgEAR = (eyeAspectRatio(eyes.left) + eyeAspectRatio(eyes.right)) / 2;
 
         if (currentChallenge === "blink") {
-          if (avgEAR < earThreshold) {
+          const isClosed = avgEAR < earThreshold;
+          setEyeState(isClosed ? "closed" : "open");
+
+          if (isClosed) {
             consecutiveClosedFrames.current++;
             if (consecutiveClosedFrames.current >= EAR_BLINK_FRAMES) {
               eyesWereClosed.current = true;
@@ -372,6 +387,14 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
             <p className="text-slate-400 text-xs">Step {currentIdx + 1} of {challenges.length}</p>
             <p className="text-white font-bold text-xl">{CHALLENGE_LABELS[currentChallenge]}</p>
             <p className="text-slate-400 text-sm">{CHALLENGE_HINTS[currentChallenge]}</p>
+            {currentChallenge === "blink" && eyeState !== null && (
+              <div className="flex items-center justify-center gap-2 text-xs">
+                <span className={`w-2 h-2 rounded-full ${eyeState === "closed" ? "bg-indigo-400" : "bg-white/30"}`} />
+                <span className="text-slate-500">
+                  {eyeState === "closed" ? "Eyes closed — open them to register" : "Eyes open — blink slowly"}
+                </span>
+              </div>
+            )}
             <div className="flex gap-2 justify-center">
               {challenges.map((c, i) => (
                 <div key={c} className={`w-3 h-3 rounded-full transition-colors ${
