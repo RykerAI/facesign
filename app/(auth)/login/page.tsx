@@ -15,12 +15,25 @@ import { createClient } from "@/lib/supabase/client";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z.string().min(1, "Enter your password"),
 });
 type FormData = z.infer<typeof schema>;
 
 const inputClass =
   "bg-white/[0.04] border-white/[0.1] text-white placeholder:text-white/20 focus-visible:ring-0 focus-visible:border-[#4db3ff]/60 rounded-xl";
+
+function friendlyLoginError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes("invalid") || m.includes("credentials") || m.includes("wrong"))
+    return "Incorrect email or password. Please try again.";
+  if (m.includes("not confirmed") || m.includes("confirm"))
+    return "Please check your inbox and confirm your email address before signing in.";
+  if (m.includes("rate limit") || m.includes("too many"))
+    return "Too many attempts — please wait a moment and try again.";
+  if (m.includes("network") || m.includes("fetch"))
+    return "Connection error — check your internet and try again.";
+  return msg;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -40,11 +53,14 @@ export default function LoginPage() {
         email: data.email,
         password: data.password,
       });
-      if (error) throw error;
+      if (error) {
+        toast.error(friendlyLoginError(error.message));
+        return;
+      }
       router.push("/dashboard");
       router.refresh();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Login failed");
+    } catch {
+      toast.error("Sign in failed — please try again.");
     } finally {
       setLoading(false);
     }

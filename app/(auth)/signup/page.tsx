@@ -32,6 +32,17 @@ type FormData = z.infer<typeof schema>;
 const inputClass =
   "bg-white/[0.04] border-white/[0.1] text-white placeholder:text-white/20 focus-visible:ring-0 focus-visible:border-[#4db3ff]/60 rounded-xl";
 
+function friendlyAuthError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes("already registered") || m.includes("already exists") || m.includes("user already"))
+    return "already_exists";
+  if (m.includes("invalid") || m.includes("credentials"))
+    return "invalid_credentials";
+  if (m.includes("rate limit") || m.includes("too many"))
+    return "rate_limit";
+  return "generic";
+}
+
 export default function SignupPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -48,19 +59,63 @@ export default function SignupPage() {
       const { data: authData, error } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
-        options: {
-          data: { full_name: data.full_name },
-        },
+        options: { data: { full_name: data.full_name } },
       });
-      if (error) throw error;
-      if (authData.session) {
-        router.push("/onboarding");
-      } else {
-        toast.success("Account created! Please sign in.");
-        router.push("/login");
+
+      if (error) {
+        const kind = friendlyAuthError(error.message);
+        if (kind === "already_exists") {
+          // Account exists — try signing them in directly
+          const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: data.email,
+            password: data.password,
+          });
+          if (!signInError) {
+            toast.success("Welcome back — you already had an account.");
+            router.push("/dashboard");
+            router.refresh();
+            return;
+          }
+          // Password doesn't match — send to login with a clear message
+          toast.error("An account with this email already exists. Please sign in.");
+          router.push("/login");
+          return;
+        }
+        if (kind === "rate_limit") {
+          toast.error("Too many attempts — please wait a moment and try again.");
+          return;
+        }
+        throw error;
       }
+
+      // No error — check if we got a session
+      if (authData.session) {
+        // Email confirmation is off — logged in immediately
+        router.push("/onboarding");
+        router.refresh();
+        return;
+      }
+
+      // Email confirmation is on — session is null until confirmed.
+      // Try signing in anyway in case confirmation was just disabled.
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
+      });
+      if (!signInError) {
+        router.push("/onboarding");
+        router.refresh();
+        return;
+      }
+
+      // Confirmation still required
+      toast.success(
+        "Account created! Check your email to confirm your address, then sign in.",
+        { duration: 6000 }
+      );
+      router.push("/login");
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Sign up failed");
+      toast.error(err instanceof Error ? err.message : "Sign up failed — please try again.");
     } finally {
       setLoading(false);
     }
