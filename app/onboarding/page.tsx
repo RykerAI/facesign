@@ -9,8 +9,9 @@ import LivenessCapture, { LivenessResult } from "@/components/camera/LivenessCap
 import { createClient } from "@/lib/supabase/client";
 import { FloatingOrbs } from "@/components/ui/FloatingOrbs";
 import { ParticleNetwork } from "@/components/ui/ParticleNetwork";
+import { BiometricConsent } from "@/components/camera/BiometricConsent";
 
-type Step = "intro" | "face" | "fingerprint" | "done";
+type Step = "intro" | "consent" | "face" | "fingerprint" | "done";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -112,24 +113,24 @@ export default function OnboardingPage() {
       <div className="relative z-10 w-full max-w-lg">
         {/* Progress */}
         <div className="flex items-center gap-2 mb-8">
-          {(["intro", "face", "fingerprint", "done"] as Step[]).map((s, i) => (
+          {(["intro", "consent", "face", "fingerprint", "done"] as Step[]).map((s, i) => (
             <div key={s} className="flex items-center gap-2 flex-1">
               <div
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
                   step === s
-                    ? "bg-indigo-600 text-white"
-                    : ["face", "fingerprint", "done"].indexOf(step) > i
+                    ? "bg-white text-black"
+                    : ["consent", "face", "fingerprint", "done"].indexOf(step) > i
                     ? "bg-green-500 text-white"
                     : "bg-white/10 text-slate-400"
                 }`}
               >
-                {["face", "fingerprint", "done"].indexOf(step) > i ? (
+                {["consent", "face", "fingerprint", "done"].indexOf(step) > i ? (
                   <CheckCircle size={16} />
                 ) : (
                   i + 1
                 )}
               </div>
-              {i < 3 && <div className="flex-1 h-px bg-white/10" />}
+              {i < 4 && <div className="flex-1 h-px bg-white/10" />}
             </div>
           ))}
         </div>
@@ -180,12 +181,20 @@ export default function OnboardingPage() {
                 </div>
               </div>
               <Button
-                onClick={() => setStep("face")}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white"
+                onClick={() => setStep("consent")}
+                className="w-full bg-white text-black hover:bg-white/90 font-semibold"
               >
                 Get started <ArrowRight size={16} className="ml-2" />
               </Button>
             </div>
+          )}
+
+          {/* BIOMETRIC CONSENT */}
+          {step === "consent" && (
+            <BiometricConsent
+              onAccept={() => setStep("face")}
+              onDecline={() => setStep("intro")}
+            />
           )}
 
           {/* FACE CAPTURE */}

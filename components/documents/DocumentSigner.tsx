@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import FaceAuthCapture from "@/components/camera/FaceAuthCapture";
 import LivenessCapture from "@/components/camera/LivenessCapture";
+import { BiometricConsent } from "@/components/camera/BiometricConsent";
 import Link from "next/link";
 
 interface Props {
@@ -41,6 +42,7 @@ export function DocumentSigner({
 }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<Method>("none");
+  const [faceConsented, setFaceConsented] = useState(false);
   const [fingerprintLoading, setFingerprintLoading] = useState(false);
 
   // Face signing step state
@@ -64,6 +66,7 @@ export function DocumentSigner({
 
   function cancelFaceFlow() {
     resetFaceFlow();
+    setFaceConsented(false);
     setMethod("none");
   }
 
@@ -141,6 +144,15 @@ export function DocumentSigner({
   }
 
   // ── Face signing flow ─────────────────────────────────────────────────────
+  if (method === "face" && faceDescriptor && !faceConsented) {
+    return (
+      <BiometricConsent
+        onAccept={() => setFaceConsented(true)}
+        onDecline={cancelFaceFlow}
+      />
+    );
+  }
+
   if (method === "face" && faceDescriptor) {
     const steps: FaceStep[] = [1, 2, 3];
 
