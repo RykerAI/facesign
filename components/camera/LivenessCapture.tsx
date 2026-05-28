@@ -44,23 +44,30 @@ function pickChallenges(): Challenge[] {
 
 type Phase = "loading" | "error" | "align" | "calibrating" | "challenge" | "capturing" | "done";
 
-// Blink: EAR must drop below this fraction of the calibrated baseline
-const EAR_CLOSED_RATIO = 0.78;
-// Consecutive below-threshold frames needed — 1 is fine because we also require reopening
-const EAR_BLINK_FRAMES = 1;
+// Blink: current EAR must be this fraction or less of the rolling open-eye baseline
+// Using rolling 75th-percentile rather than a fixed calibrated value — adapts to
+// each person's eye shape and lighting without needing precise calibration
+const EAR_DROP_RATIO = 0.78;
+// How many recent frames to keep in the rolling buffer
+const EAR_BUFFER_SIZE = 12;
 // Head turn: nose must deviate this far from calibrated baseline (fraction of half-face-width)
 const HEAD_TURN_THRESHOLD = 0.20;
 // Detection polling interval
 const DETECTION_MS = 75;
-// Number of frames to sample for baseline calibration (~1.5s at 75ms)
+// Number of frames for nose-position calibration (~1.5s)
 const CALIBRATION_FRAMES = 20;
-// Hard floor — any EAR below this is definitely a blink, exclude from calibration
-const EAR_BLINK_FLOOR = 0.21;
 
 function median(arr: number[]): number {
   const sorted = [...arr].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// 75th-percentile of recent EAR readings = robust open-eye baseline
+// even if half the recent frames contain partial blinks
+function openEyeBaseline(buf: number[]): number {
+  const sorted = [...buf].sort((a, b) => b - a);
+  return sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0];
 }
 
 export default function LivenessCapture({ onSuccess, onError }: Props) {
@@ -75,7 +82,7 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
   const calibNoseRatios = useRef<number[]>([]);
 
   // Blink state
-  const consecutiveClosedFrames = useRef(0);
+  const earBuffer = useRef<number[]>([]);
   const eyesWereClosed = useRef(false);
 
   const [phase, setPhase] = useState<Phase>("loading");
@@ -146,13 +153,10 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
 
         if (calibEARs.current.length >= CALIBRATION_FRAMES) {
           clearInterval(id);
-          // Use median of non-blink frames so accidental blinks during calibration
-          // don't drag the baseline down and make the threshold impossible to hit
-          const openEARs = calibEARs.current.filter(e => e > EAR_BLINK_FLOOR);
-          calibratedEAR.current = median(openEARs.length >= 5 ? openEARs : calibEARs.current);
+          calibratedEAR.current = median(calibEARs.current); // kept for reference, not used for blink
           calibratedNoseRatio.current = median(calibNoseRatios.current);
 
-          consecutiveClosedFrames.current = 0;
+          earBuffer.current = [];
           eyesWereClosed.current = false;
           const selected = pickChallenges();
           setChallenges(selected);
@@ -207,10 +211,9 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
     const currentChallenge = challenges[currentIdx];
     if (!currentChallenge) return;
 
-    consecutiveClosedFrames.current = 0;
+    earBuffer.current = [];
     eyesWereClosed.current = false;
 
-    const earThreshold = calibratedEAR.current * EAR_CLOSED_RATIO;
     const baselineNose = calibratedNoseRatio.current;
 
     function advance(done: Challenge) {
@@ -220,7 +223,7 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
       if (next >= challenges.length) {
         captureAndFinish();
       } else {
-        consecutiveClosedFrames.current = 0;
+        earBuffer.current = [];
         eyesWereClosed.current = false;
         setCurrentIdx(next);
       }
@@ -242,19 +245,21 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
         const avgEAR = (eyeAspectRatio(eyes.left) + eyeAspectRatio(eyes.right)) / 2;
 
         if (currentChallenge === "blink") {
-          const isClosed = avgEAR < earThreshold;
-          setEyeState(isClosed ? "closed" : "open");
+          // Push into rolling buffer; keep last EAR_BUFFER_SIZE readings
+          earBuffer.current = [...earBuffer.current, avgEAR].slice(-EAR_BUFFER_SIZE);
 
-          if (isClosed) {
-            consecutiveClosedFrames.current++;
-            if (consecutiveClosedFrames.current >= EAR_BLINK_FRAMES) {
+          // Need enough readings to establish a reliable open-eye baseline
+          if (earBuffer.current.length >= 4) {
+            const baseline = openEyeBaseline(earBuffer.current);
+            const isClosed = avgEAR < baseline * EAR_DROP_RATIO;
+            setEyeState(isClosed ? "closed" : "open");
+
+            if (isClosed) {
               eyesWereClosed.current = true;
+            } else if (eyesWereClosed.current) {
+              // Confirmed: eyes went closed then reopened
+              advance(currentChallenge);
             }
-          } else if (eyesWereClosed.current) {
-            // Eyes were shut for enough frames and are now open — confirmed blink
-            advance(currentChallenge);
-          } else {
-            consecutiveClosedFrames.current = 0;
           }
         } else if (currentChallenge === "turn_head") {
           const noseRatio = getHeadTurnRatio(landmarks, det.box);
@@ -288,7 +293,7 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
     setErrorMsg("");
     calibratedEAR.current = 0.28;
     calibratedNoseRatio.current = 0;
-    consecutiveClosedFrames.current = 0;
+    earBuffer.current = [];
     eyesWereClosed.current = false;
   }
 
