@@ -24,7 +24,7 @@ export async function detectFaceWithDescriptor(
   >
 > | null> {
   const result = await faceapi
-    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }))
     .withFaceLandmarks()
     .withFaceDescriptor();
   return result ?? null;
@@ -37,7 +37,7 @@ export async function detectFaceWithLandmarks(
   faceapi.FaceLandmarks68
 > | null> {
   const result = await faceapi
-    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 }))
     .withFaceLandmarks();
   return result ?? null;
 }
