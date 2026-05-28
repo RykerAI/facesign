@@ -19,6 +19,9 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
+const inputClass =
+  "bg-white/[0.04] border-white/[0.1] text-white placeholder:text-white/20 focus-visible:ring-0 focus-visible:border-[#4db3ff]/60 rounded-xl";
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -52,15 +55,12 @@ export default function LoginPage() {
     try {
       const { startAuthentication } = await import("@simplewebauthn/browser");
 
-      // Get options from server
       const optRes = await fetch("/api/webauthn/auth-options", { method: "POST" });
       if (!optRes.ok) throw new Error("Could not get authentication options");
       const options = await optRes.json();
 
-      // Trigger fingerprint/face-id prompt
       const credential = await startAuthentication({ optionsJSON: options });
 
-      // Verify with server
       const verifyRes = await fetch("/api/webauthn/verify-authentication", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -73,7 +73,6 @@ export default function LoginPage() {
       const result = await verifyRes.json();
       if (!result.verified) throw new Error("Authentication failed");
 
-      // Exchange for Supabase session via magic link token
       const sessionRes = await fetch("/api/webauthn/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -99,41 +98,45 @@ export default function LoginPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-white">Welcome back</h2>
-        <p className="text-slate-400 text-sm mt-1">Sign in to your account</p>
+        <h2 className="text-lg font-semibold text-white tracking-tight">Welcome back</h2>
+        <p className="text-white/35 text-sm mt-0.5">Sign in to your account</p>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="email" className="text-slate-300">Email</Label>
+          <Label htmlFor="email" className="text-white/50 text-xs uppercase tracking-wider">
+            Email
+          </Label>
           <Input
             id="email"
             type="email"
             autoComplete="email"
             placeholder="you@example.com"
-            className="bg-white/10 border-white/20 text-white placeholder:text-slate-500 focus:border-indigo-500"
+            className={inputClass}
             {...register("email")}
           />
           {errors.email && <p className="text-red-400 text-xs">{errors.email.message}</p>}
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="password" className="text-slate-300">Password</Label>
+          <Label htmlFor="password" className="text-white/50 text-xs uppercase tracking-wider">
+            Password
+          </Label>
           <div className="relative">
             <Input
               id="password"
               type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               placeholder="••••••••"
-              className="bg-white/10 border-white/20 text-white placeholder:text-slate-500 focus:border-indigo-500 pr-10"
+              className={`${inputClass} pr-10`}
               {...register("password")}
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition-colors"
             >
-              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
             </button>
           </div>
           {errors.password && <p className="text-red-400 text-xs">{errors.password.message}</p>}
@@ -142,19 +145,19 @@ export default function LoginPage() {
         <Button
           type="submit"
           disabled={loading}
-          className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+          className="w-full bg-white text-black hover:bg-white/90 font-semibold rounded-xl h-11 mt-2"
         >
-          {loading ? <Loader2 className="animate-spin mr-2" size={16} /> : null}
+          {loading ? <Loader2 className="animate-spin mr-2" size={15} /> : null}
           Sign in
         </Button>
       </form>
 
       <div className="relative">
         <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-white/10" />
+          <div className="w-full border-t border-white/[0.07]" />
         </div>
-        <div className="relative flex justify-center text-xs text-slate-500">
-          <span className="bg-transparent px-2">or continue with</span>
+        <div className="relative flex justify-center text-[10px] text-white/25 uppercase tracking-wider">
+          <span className="bg-transparent px-3">or</span>
         </div>
       </div>
 
@@ -163,18 +166,23 @@ export default function LoginPage() {
         variant="outline"
         onClick={signInWithFingerprint}
         disabled={webauthnLoading}
-        className="w-full border-white/20 text-slate-300 hover:bg-white/10 hover:text-white bg-transparent"
+        className="w-full rounded-xl h-11 font-medium"
+        style={{
+          background: "rgba(77,179,255,0.06)",
+          border: "1px solid rgba(77,179,255,0.25)",
+          color: "#4db3ff",
+        }}
       >
         {webauthnLoading
-          ? <Loader2 className="animate-spin mr-2" size={16} />
-          : <Fingerprint size={16} className="mr-2" />
+          ? <Loader2 className="animate-spin mr-2" size={15} />
+          : <Fingerprint size={15} className="mr-2" />
         }
         Sign in with Fingerprint / Face ID
       </Button>
 
-      <p className="text-center text-sm text-slate-400">
+      <p className="text-center text-xs text-white/30">
         {"Don't have an account? "}
-        <Link href="/signup" className="text-indigo-400 hover:text-indigo-300 font-medium">
+        <Link href="/signup" className="text-[#4db3ff] hover:text-[#7fd0ff] font-medium transition-colors">
           Sign up
         </Link>
       </p>

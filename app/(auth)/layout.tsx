@@ -1,105 +1,57 @@
-import { FloatingOrbs } from "@/components/ui/FloatingOrbs";
-import { ParticleNetwork } from "@/components/ui/ParticleNetwork";
+import { BiometricBg } from "@/components/ui/BiometricBg";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-slate-950">
-      {/* Animated background layers */}
-      <FloatingOrbs />
-
-      {/* Moving dot grid */}
-      <div
-        className="absolute inset-0 pointer-events-none opacity-[0.07]"
-        style={{
-          backgroundImage:
-            "radial-gradient(circle, rgba(99,102,241,0.8) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
-          animation: "grid-drift 12s linear infinite",
-        }}
-      />
-
-      {/* Particle network */}
-      <ParticleNetwork count={90} />
-
-      {/* Vignette */}
-      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(2,6,23,0.8)_100%)]" />
+    <div
+      className="relative min-h-screen flex items-center justify-center overflow-hidden"
+      style={{ background: "#050507" }}
+    >
+      {/* Full-screen biometric scan graphic */}
+      <BiometricBg />
 
       {/* Content */}
-      <div className="relative z-10 w-full max-w-md px-4 py-12">
-        {/* Logo */}
+      <div className="relative z-10 w-full max-w-[400px] px-4 py-16">
+        {/* Logo mark */}
         <div className="text-center mb-10">
-          <div className="relative inline-flex items-center justify-center mb-5">
-            {/* Beacon rings */}
-            <div
-              className="absolute inset-0 rounded-full border border-indigo-500/40"
-              style={{ animation: "beacon 2.5s ease-out infinite" }}
-            />
-            <div
-              className="absolute inset-0 rounded-full border border-indigo-400/30"
-              style={{ animation: "beacon 2.5s ease-out infinite 0.8s" }}
-            />
-            {/* Icon */}
-            <div
-              className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-2xl"
-              style={{ animation: "glow-pulse 3s ease-in-out infinite" }}
-            >
-              <svg
-                className="w-9 h-9 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
-                />
-              </svg>
-            </div>
+          {/* Reticle icon: two corner brackets forming a face-scan target */}
+          <div className="inline-flex items-center justify-center mb-5">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+              {/* Top-left bracket */}
+              <path d="M4 14 L4 4 L14 4" stroke="white" strokeWidth="2" strokeLinecap="square" />
+              {/* Top-right bracket */}
+              <path d="M40 14 L40 4 L30 4" stroke="white" strokeWidth="2" strokeLinecap="square" />
+              {/* Bottom-left bracket */}
+              <path d="M4 30 L4 40 L14 40" stroke="white" strokeWidth="2" strokeLinecap="square" />
+              {/* Bottom-right bracket */}
+              <path d="M40 30 L40 40 L30 40" stroke="white" strokeWidth="2" strokeLinecap="square" />
+              {/* Face oval */}
+              <ellipse cx="22" cy="22" rx="9" ry="11" stroke="#4db3ff" strokeWidth="1" />
+              {/* Center dot */}
+              <circle cx="22" cy="22" r="1.5" fill="#4db3ff" />
+            </svg>
           </div>
 
-          <h1
-            className="text-4xl font-extrabold tracking-tight"
-            style={{
-              background:
-                "linear-gradient(90deg, #818cf8, #a78bfa, #60a5fa, #818cf8)",
-              backgroundSize: "300% auto",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              animation: "gradient-x 5s linear infinite",
-            }}
-          >
+          <h1 className="text-[1.75rem] font-semibold tracking-tight text-white">
             FaceSign
           </h1>
-          <p className="text-slate-400 mt-2 text-sm tracking-wide">
-            Biometric document signing
+          <p
+            className="mt-2 text-[10px] tracking-[0.22em] uppercase"
+            style={{ color: "rgba(255,255,255,0.3)", fontFamily: "monospace" }}
+          >
+            Biometric Document Signing
           </p>
         </div>
 
-        {/* Card with rotating gradient border */}
+        {/* Minimal glass card */}
         <div
-          className="relative rounded-2xl p-px"
+          className="rounded-2xl p-8"
           style={{
-            background:
-              "conic-gradient(from var(--angle), rgba(99,102,241,0.6), rgba(139,92,246,0.6), rgba(59,130,246,0.6), rgba(99,102,241,0.6))",
-            animation: "rotate-border 6s linear infinite",
+            background: "rgba(8,8,12,0.75)",
+            backdropFilter: "blur(24px)",
+            border: "1px solid rgba(255,255,255,0.07)",
           }}
         >
-          {/* Shimmer sweep over the border */}
-          <div
-            className="absolute inset-0 rounded-2xl opacity-0 hover:opacity-100 transition-opacity duration-500"
-            style={{
-              background:
-                "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 50%, transparent 100%)",
-              backgroundSize: "200% auto",
-              animation: "shimmer 3s linear infinite",
-            }}
-          />
-
-          <div className="relative bg-slate-900/90 backdrop-blur-xl rounded-[calc(1rem-1px)] p-8">
-            {children}
-          </div>
+          {children}
         </div>
       </div>
     </div>
