@@ -11,8 +11,14 @@ import {
   CheckCircle,
   AlertCircle,
   RefreshCw,
+  Download,
+  Mail,
+  ArrowLeft,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import FaceAuthCapture from "@/components/camera/FaceAuthCapture";
 import LivenessCapture from "@/components/camera/LivenessCapture";
 import { BiometricConsent } from "@/components/camera/BiometricConsent";
@@ -23,6 +29,9 @@ interface Props {
   faceDescriptor: number[] | null;
   faceImageUrl: string | null;
   hasWebauthn: boolean;
+  signerName: string;
+  signerEmail: string;
+  documentTitle: string;
 }
 
 type Method = "none" | "face" | "fingerprint";
@@ -39,6 +48,9 @@ export function DocumentSigner({
   faceDescriptor,
   faceImageUrl,
   hasWebauthn,
+  signerName,
+  signerEmail,
+  documentTitle,
 }: Props) {
   const router = useRouter();
   const [method, setMethod] = useState<Method>("none");
@@ -53,6 +65,17 @@ export function DocumentSigner({
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
   const [signError, setSignError] = useState("");
+
+  // Signed confirmation state
+  const [signedState, setSignedState] = useState(false);
+  const [signedAt, setSignedAt] = useState<Date | null>(null);
+  const [signedMethod, setSignedMethod] = useState<"face" | "fingerprint">("face");
+
+  // Email modal state
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailRecipient, setEmailRecipient] = useState("");
+  const [emailName, setEmailName] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
 
   function resetFaceFlow() {
     setFaceStep(1);
@@ -70,6 +93,53 @@ export function DocumentSigner({
     setMethod("none");
   }
 
+  function downloadReceipt() {
+    const receipt = {
+      document: documentTitle,
+      signed_by: signerName,
+      email: signerEmail,
+      signed_at: signedAt?.toISOString() ?? new Date().toISOString(),
+      method: signedMethod,
+      verified_by: "FaceSign Biometric Platform",
+    };
+    const blob = new Blob([JSON.stringify(receipt, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `facesign-receipt-${documentId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function sendEmail(e: React.FormEvent) {
+    e.preventDefault();
+    setEmailSending(true);
+    try {
+      const res = await fetch(`/api/documents/${documentId}/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipientEmail: emailRecipient,
+          recipientName: emailName || undefined,
+        }),
+      });
+      const data = (await res.json()) as { success?: boolean; mailtoUrl?: string; error?: string };
+      if (data.mailtoUrl) {
+        window.location.href = data.mailtoUrl;
+        setShowEmailModal(false);
+      } else if (data.success) {
+        toast.success("Email sent!");
+        setShowEmailModal(false);
+      } else {
+        toast.error(data.error ?? "Failed to send email");
+      }
+    } catch {
+      toast.error("Failed to send email");
+    } finally {
+      setEmailSending(false);
+    }
+  }
+
   const doSign = useCallback(
     async (imageDataUrl: string) => {
       setSigning(true);
@@ -81,14 +151,15 @@ export function DocumentSigner({
           body: JSON.stringify({ method: "face", imageDataUrl }),
         });
         if (!res.ok) throw new Error("Signing failed");
-        toast.success("Document signed with your face!");
-        router.refresh();
+        setSignedAt(new Date());
+        setSignedMethod("face");
+        setSignedState(true);
       } catch {
         setSignError("Failed to sign document. Please try again.");
         setSigning(false);
       }
     },
-    [documentId, router]
+    [documentId]
   );
 
   const handleFaceMatchSuccess = useCallback(
@@ -124,7 +195,7 @@ export function DocumentSigner({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(credential),
       });
-      const result = await verifyRes.json();
+      const result = (await verifyRes.json()) as { verified: boolean };
       if (!result.verified) throw new Error("Fingerprint authentication failed");
 
       const signRes = await fetch(`/api/documents/${documentId}/sign`, {
@@ -134,13 +205,168 @@ export function DocumentSigner({
       });
       if (!signRes.ok) throw new Error("Signing failed");
 
-      toast.success("Document signed with fingerprint!");
-      router.refresh();
+      setSignedAt(new Date());
+      setSignedMethod("fingerprint");
+      setSignedState(true);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Fingerprint signing failed");
     } finally {
       setFingerprintLoading(false);
     }
+  }
+
+  // ── Signed confirmation ───────────────────────────────────────────────────
+  if (signedState && signedAt) {
+    return (
+      <>
+        <div className="space-y-6 py-4">
+          {/* Animated checkmark */}
+          <div className="flex justify-center">
+            <div className="relative w-20 h-20">
+              <div className="absolute inset-0 rounded-full bg-green-500/20 animate-ping" />
+              <div className="relative w-20 h-20 rounded-full bg-green-500/20 border-2 border-green-500/50 flex items-center justify-center">
+                <CheckCircle className="w-10 h-10 text-green-400" />
+              </div>
+            </div>
+          </div>
+
+          <div className="text-center space-y-1">
+            <h3 className="text-white text-xl font-bold">Document signed successfully</h3>
+            <p className="text-slate-400 text-sm">Your biometric signature has been recorded</p>
+          </div>
+
+          {/* Signing details */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Document</span>
+              <span className="text-white font-medium truncate max-w-[60%] text-right">{documentTitle}</span>
+            </div>
+            <div className="h-px bg-white/5" />
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Signed by</span>
+              <span className="text-white font-medium">{signerName || signerEmail}</span>
+            </div>
+            <div className="h-px bg-white/5" />
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Date &amp; time</span>
+              <span className="text-white font-medium">{signedAt.toLocaleString()}</span>
+            </div>
+            <div className="h-px bg-white/5" />
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Method</span>
+              <span className="text-white font-medium">
+                {signedMethod === "face" ? "Face biometric" : "Fingerprint biometric"}
+              </span>
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Button
+              onClick={downloadReceipt}
+              variant="outline"
+              className="border-white/10 bg-white/5 hover:bg-white/10 text-white"
+            >
+              <Download size={14} className="mr-2" />
+              Download receipt
+            </Button>
+            <Button
+              onClick={() => setShowEmailModal(true)}
+              variant="outline"
+              className="border-white/10 bg-white/5 hover:bg-white/10 text-white"
+            >
+              <Mail size={14} className="mr-2" />
+              Send via email
+            </Button>
+            <Button
+              asChild
+              className="bg-[#4db3ff] hover:bg-[#4db3ff]/90 text-slate-950 font-semibold"
+            >
+              <Link href="/dashboard">
+                <ArrowLeft size={14} className="mr-2" />
+                Back to dashboard
+              </Link>
+            </Button>
+          </div>
+        </div>
+
+        {/* Email modal */}
+        {showEmailModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-md mx-4 space-y-5 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <h3 className="text-white font-semibold text-lg">Send signing confirmation</h3>
+                <button
+                  onClick={() => setShowEmailModal(false)}
+                  className="text-slate-400 hover:text-white transition-colors p-1 rounded"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="text-slate-400 text-sm">
+                Send a confirmation email with document signing details to any recipient.
+              </p>
+              <form onSubmit={sendEmail} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email-recipient" className="text-slate-300 text-sm">
+                    Recipient email <span className="text-red-400">*</span>
+                  </Label>
+                  <Input
+                    id="email-recipient"
+                    type="email"
+                    required
+                    value={emailRecipient}
+                    onChange={(e) => setEmailRecipient(e.target.value)}
+                    placeholder="recipient@example.com"
+                    className="bg-white/5 border-white/10 text-white placeholder:text-slate-500"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="email-name" className="text-slate-300 text-sm">
+                    Recipient name <span className="text-slate-500">(optional)</span>
+                  </Label>
+                  <Input
+                    id="email-name"
+                    type="text"
+                    value={emailName}
+                    onChange={(e) => setEmailName(e.target.value)}
+                    placeholder="John Doe"
+                    className="bg-white/5 border-white/10 text-white placeholder:text-slate-500"
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setShowEmailModal(false)}
+                    className="flex-1 text-slate-400 hover:text-white border border-white/10"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={emailSending}
+                    className="flex-1 bg-[#4db3ff] hover:bg-[#4db3ff]/90 text-slate-950 font-semibold"
+                  >
+                    {emailSending ? (
+                      <>
+                        <Loader2 size={14} className="mr-2 animate-spin" />
+                        Sending…
+                      </>
+                    ) : (
+                      <>
+                        <Mail size={14} className="mr-2" />
+                        Send
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </>
+    );
   }
 
   // ── Face signing flow ─────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
 
   const [{ data: docData }, { data: profileData }] = await Promise.all([
     supabase.from("documents").select("*").eq("id", id).eq("user_id", user.id).single(),
-    supabase.from("profiles").select("face_descriptor, face_image_url, liveness_verified, webauthn_credential_id").eq("id", user.id).single(),
+    supabase.from("profiles").select("face_descriptor, face_image_url, liveness_verified, webauthn_credential_id, full_name, email").eq("id", user.id).single(),
   ]);
 
   if (!docData) notFound();
@@ -107,6 +107,9 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
               faceDescriptor={profile.face_descriptor}
               faceImageUrl={profile.face_image_url}
               hasWebauthn={!!profile.webauthn_credential_id}
+              signerName={(profile as { full_name?: string | null }).full_name ?? ""}
+              signerEmail={(profile as { email?: string | null }).email ?? ""}
+              documentTitle={doc.title}
             />
           )}
         </div>
