@@ -8,9 +8,6 @@ import {
   loadModels,
   detectFaceWithLandmarks,
   detectFaceWithDescriptor,
-  eyeAspectRatio,
-  getEyePoints,
-  getHeadTurnRatio,
   descriptorToArray,
 } from "@/lib/face/detection";
 
@@ -24,75 +21,17 @@ interface Props {
   onError?: (msg: string) => void;
 }
 
-type Challenge = "blink" | "turn_head";
+type Phase = "loading" | "error" | "align" | "capturing" | "done";
 
-const CHALLENGE_LABELS: Record<Challenge, string> = {
-  blink: "Blink your eyes slowly",
-  turn_head: "Turn your head to either side",
-};
-
-const CHALLENGE_HINTS: Record<Challenge, string> = {
-  blink: "Close and open your eyes fully",
-  turn_head: "Look left or right, then back",
-};
-
-const CHALLENGES: Challenge[] = ["blink", "turn_head"];
-
-function pickChallenges(): Challenge[] {
-  return [...CHALLENGES].sort(() => Math.random() - 0.5);
-}
-
-type Phase = "loading" | "error" | "align" | "calibrating" | "challenge" | "capturing" | "done";
-
-// Blink: current EAR must be this fraction or less of the rolling open-eye baseline
-// Using rolling 75th-percentile rather than a fixed calibrated value — adapts to
-// each person's eye shape and lighting without needing precise calibration
-const EAR_DROP_RATIO = 0.78;
-// How many recent frames to keep in the rolling buffer
-const EAR_BUFFER_SIZE = 12;
-// Head turn: nose must deviate this far from calibrated baseline (fraction of half-face-width)
-const HEAD_TURN_THRESHOLD = 0.20;
-// Detection polling interval
-const DETECTION_MS = 75;
-// Number of frames for nose-position calibration (~1.5s)
-const CALIBRATION_FRAMES = 20;
-
-function median(arr: number[]): number {
-  const sorted = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-// 75th-percentile of recent EAR readings = robust open-eye baseline
-// even if half the recent frames contain partial blinks
-function openEyeBaseline(buf: number[]): number {
-  const sorted = [...buf].sort((a, b) => b - a);
-  return sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0];
-}
+const DETECTION_MS = 150;
 
 export default function LivenessCapture({ onSuccess, onError }: Props) {
   const webcamRef = useRef<Webcam>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isDetecting = useRef(false);
-
-  // Calibrated baseline (learned per-person in calibration phase)
-  const calibratedEAR = useRef(0.28);
-  const calibratedNoseRatio = useRef(0.0);
-  const calibEARs = useRef<number[]>([]);
-  const calibNoseRatios = useRef<number[]>([]);
-
-  // Blink state
-  const earBuffer = useRef<number[]>([]);
-  const eyesWereClosed = useRef(false);
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [errorMsg, setErrorMsg] = useState("");
   const [faceDetected, setFaceDetected] = useState(false);
-  const [challenges, setChallenges] = useState<Challenge[]>([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [completed, setCompleted] = useState<Challenge[]>([]);
-  const [calibProgress, setCalibProgress] = useState(0);
-  const [eyeState, setEyeState] = useState<"open" | "closed" | null>(null);
 
   const stopLoop = useCallback(() => {
     if (intervalRef.current) {
@@ -113,73 +52,25 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
     return () => stopLoop();
   }, [stopLoop, onError]);
 
-  // Alignment phase — wait for a centred face
+  // Continuously detect face so the border and button update live
   useEffect(() => {
     if (phase !== "align") return;
-    const id = setInterval(async () => {
+    intervalRef.current = setInterval(async () => {
       const video = webcamRef.current?.video;
       if (!video || video.readyState < 2) return;
       const result = await detectFaceWithLandmarks(video);
       setFaceDetected(!!result);
     }, DETECTION_MS);
-    return () => clearInterval(id);
-  }, [phase]);
+    return () => stopLoop();
+  }, [phase, stopLoop]);
 
-  // Calibration phase — sample baseline EAR and nose position while user holds still
-  useEffect(() => {
-    if (phase !== "calibrating") return;
-    calibEARs.current = [];
-    calibNoseRatios.current = [];
-
-    const id = setInterval(async () => {
-      if (isDetecting.current) return;
-      isDetecting.current = true;
-
-      const video = webcamRef.current?.video;
-      if (!video || video.readyState < 2) { isDetecting.current = false; return; }
-
-      try {
-        const detection = await detectFaceWithLandmarks(video);
-        if (!detection) { isDetecting.current = false; return; }
-
-        const { landmarks, detection: det } = detection;
-        const eyes = getEyePoints(landmarks);
-        const avgEAR = (eyeAspectRatio(eyes.left) + eyeAspectRatio(eyes.right)) / 2;
-        const noseRatio = getHeadTurnRatio(landmarks, det.box);
-
-        calibEARs.current.push(avgEAR);
-        calibNoseRatios.current.push(noseRatio);
-        setCalibProgress(calibEARs.current.length / CALIBRATION_FRAMES);
-
-        if (calibEARs.current.length >= CALIBRATION_FRAMES) {
-          clearInterval(id);
-          calibratedEAR.current = median(calibEARs.current); // kept for reference, not used for blink
-          calibratedNoseRatio.current = median(calibNoseRatios.current);
-
-          earBuffer.current = [];
-          eyesWereClosed.current = false;
-          const selected = pickChallenges();
-          setChallenges(selected);
-          setCurrentIdx(0);
-          setCompleted([]);
-          setPhase("challenge");
-        }
-      } catch {
-        // transient
-      } finally {
-        isDetecting.current = false;
-      }
-    }, DETECTION_MS);
-
-    return () => clearInterval(id);
-  }, [phase]);
-
-  const captureAndFinish = useCallback(async () => {
+  const capture = useCallback(async () => {
     setPhase("capturing");
     stopLoop();
     const video = webcamRef.current?.video;
     if (!video) {
-      setErrorMsg("Camera unavailable. Please allow camera access and try again.");
+      const msg = "Camera unavailable. Please allow camera access and try again.";
+      setErrorMsg(msg);
       setPhase("error");
       return;
     }
@@ -205,99 +96,12 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
     }
   }, [onSuccess, stopLoop]);
 
-  // Challenge detection loop
-  useEffect(() => {
-    if (phase !== "challenge") return;
-    const currentChallenge = challenges[currentIdx];
-    if (!currentChallenge) return;
-
-    earBuffer.current = [];
-    eyesWereClosed.current = false;
-
-    const baselineNose = calibratedNoseRatio.current;
-
-    function advance(done: Challenge) {
-      stopLoop();
-      const next = currentIdx + 1;
-      setCompleted((prev) => [...prev, done]);
-      if (next >= challenges.length) {
-        captureAndFinish();
-      } else {
-        earBuffer.current = [];
-        eyesWereClosed.current = false;
-        setCurrentIdx(next);
-      }
-    }
-
-    intervalRef.current = setInterval(async () => {
-      if (isDetecting.current) return;
-      isDetecting.current = true;
-
-      const video = webcamRef.current?.video;
-      if (!video || video.readyState < 2) { isDetecting.current = false; return; }
-
-      try {
-        const detection = await detectFaceWithLandmarks(video);
-        if (!detection) { isDetecting.current = false; return; }
-
-        const { landmarks, detection: det } = detection;
-        const eyes = getEyePoints(landmarks);
-        const avgEAR = (eyeAspectRatio(eyes.left) + eyeAspectRatio(eyes.right)) / 2;
-
-        if (currentChallenge === "blink") {
-          // Push into rolling buffer; keep last EAR_BUFFER_SIZE readings
-          earBuffer.current = [...earBuffer.current, avgEAR].slice(-EAR_BUFFER_SIZE);
-
-          // Need enough readings to establish a reliable open-eye baseline
-          if (earBuffer.current.length >= 4) {
-            const baseline = openEyeBaseline(earBuffer.current);
-            const isClosed = avgEAR < baseline * EAR_DROP_RATIO;
-            setEyeState(isClosed ? "closed" : "open");
-
-            if (isClosed) {
-              eyesWereClosed.current = true;
-            } else if (eyesWereClosed.current) {
-              // Confirmed: eyes went closed then reopened
-              advance(currentChallenge);
-            }
-          }
-        } else if (currentChallenge === "turn_head") {
-          const noseRatio = getHeadTurnRatio(landmarks, det.box);
-          const deviation = Math.abs(noseRatio - baselineNose);
-          if (deviation > HEAD_TURN_THRESHOLD) {
-            advance(currentChallenge);
-          }
-        }
-      } catch {
-        // transient
-      } finally {
-        isDetecting.current = false;
-      }
-    }, DETECTION_MS);
-
-    return () => stopLoop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, currentIdx, challenges, stopLoop, captureAndFinish]);
-
-  function startCalibration() {
-    setCalibProgress(0);
-    setPhase("calibrating");
-  }
-
   function reset() {
     stopLoop();
     setPhase("align");
     setFaceDetected(false);
-    setCompleted([]);
-    setCurrentIdx(0);
     setErrorMsg("");
-    calibratedEAR.current = 0.28;
-    calibratedNoseRatio.current = 0;
-    earBuffer.current = [];
-    eyesWereClosed.current = false;
   }
-
-  const currentChallenge = challenges[currentIdx];
 
   return (
     <div className="flex flex-col items-center gap-6">
@@ -306,7 +110,7 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
         <div className={`absolute inset-0 rounded-full overflow-hidden border-4 transition-colors duration-300 ${
           phase === "done" ? "border-green-500" :
           phase === "error" ? "border-red-500" :
-          faceDetected || phase === "challenge" || phase === "calibrating" ? "border-indigo-500" :
+          faceDetected ? "border-indigo-500" :
           "border-white/20"
         }`}>
           <Webcam
@@ -318,22 +122,6 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
             className="w-full h-full object-cover scale-x-[-1]"
           />
         </div>
-
-        {phase === "calibrating" && (
-          <div className="absolute inset-0 rounded-full overflow-hidden">
-            <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
-              <circle
-                cx="50" cy="50" r="48"
-                fill="none"
-                stroke="rgb(99 102 241)"
-                strokeWidth="4"
-                strokeDasharray={`${calibProgress * 301.6} 301.6`}
-                strokeLinecap="round"
-                className="transition-all duration-100"
-              />
-            </svg>
-          </div>
-        )}
 
         {phase === "done" && (
           <div className="absolute inset-0 flex items-center justify-center bg-green-500/30 rounded-full">
@@ -353,7 +141,7 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
       </div>
 
       {/* Status */}
-      <div className="text-center space-y-2 min-h-[100px]">
+      <div className="text-center space-y-3 min-h-[100px]">
         {phase === "loading" && (
           <p className="text-slate-400 flex items-center gap-2 justify-center text-sm">
             <Loader2 className="animate-spin" size={14} /> Loading face detection models…
@@ -367,47 +155,10 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
             </p>
             <p className="text-slate-500 text-xs">Ensure good lighting and face the camera directly</p>
             {faceDetected && (
-              <Button onClick={startCalibration} className="bg-indigo-600 hover:bg-indigo-500 text-white">
-                <Camera size={16} className="mr-2" /> Start liveness check
+              <Button onClick={capture} className="bg-indigo-600 hover:bg-indigo-500 text-white">
+                <Camera size={16} className="mr-2" /> Take selfie
               </Button>
             )}
-          </div>
-        )}
-
-        {phase === "calibrating" && (
-          <div className="space-y-2">
-            <p className="text-white font-medium">Hold still…</p>
-            <p className="text-slate-400 text-sm">Calibrating to your face</p>
-            <div className="w-48 mx-auto bg-white/10 rounded-full h-1.5 overflow-hidden">
-              <div
-                className="h-full bg-indigo-500 rounded-full transition-all duration-100"
-                style={{ width: `${calibProgress * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {phase === "challenge" && currentChallenge && (
-          <div className="space-y-3">
-            <p className="text-slate-400 text-xs">Step {currentIdx + 1} of {challenges.length}</p>
-            <p className="text-white font-bold text-xl">{CHALLENGE_LABELS[currentChallenge]}</p>
-            <p className="text-slate-400 text-sm">{CHALLENGE_HINTS[currentChallenge]}</p>
-            {currentChallenge === "blink" && eyeState !== null && (
-              <div className="flex items-center justify-center gap-2 text-xs">
-                <span className={`w-2 h-2 rounded-full ${eyeState === "closed" ? "bg-indigo-400" : "bg-white/30"}`} />
-                <span className="text-slate-500">
-                  {eyeState === "closed" ? "Eyes closed — open them to register" : "Eyes open — blink slowly"}
-                </span>
-              </div>
-            )}
-            <div className="flex gap-2 justify-center">
-              {challenges.map((c, i) => (
-                <div key={c} className={`w-3 h-3 rounded-full transition-colors ${
-                  completed.includes(c) ? "bg-green-500" :
-                  i === currentIdx ? "bg-indigo-500 animate-pulse" : "bg-white/20"
-                }`} />
-              ))}
-            </div>
           </div>
         )}
 
@@ -429,17 +180,6 @@ export default function LivenessCapture({ onSuccess, onError }: Props) {
           </div>
         )}
       </div>
-
-      {/* Completed challenges */}
-      {completed.length > 0 && phase === "challenge" && (
-        <div className="flex flex-wrap gap-2 justify-center">
-          {completed.map((c) => (
-            <span key={c} className="flex items-center gap-1 text-xs text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-1 rounded-full">
-              <CheckCircle size={10} /> {CHALLENGE_LABELS[c]}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

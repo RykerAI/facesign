@@ -25,7 +25,6 @@ export default function NewDocumentPage() {
   const router = useRouter();
   const supabase = createClient();
   const [loading, setLoading] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
 
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
@@ -40,7 +39,6 @@ export default function NewDocumentPage() {
 
     if (textContent) {
       setValue("content", textContent);
-      setUploadedFile(file);
       return;
     }
 
@@ -54,7 +52,6 @@ export default function NewDocumentPage() {
     }
     const { url } = await res.json();
     setFileUrl(url);
-    setUploadedFile(file);
     setValue("content", `__file__:${url}`);
     toast.success("File uploaded — sign it with your biometrics");
   }

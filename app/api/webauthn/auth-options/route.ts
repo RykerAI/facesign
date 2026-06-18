@@ -4,15 +4,16 @@ import type { AuthenticatorTransportFuture } from "@simplewebauthn/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 
 const RP_ID = process.env.NEXT_PUBLIC_WEBAUTHN_RP_ID ?? "localhost";
+const CHALLENGE_COOKIE = "webauthn_login_challenge";
 
 export async function POST(req: NextRequest) {
-  // Auth-options can be called pre-login (no session) with an email hint,
+  // Auth-options can be called pre-login (no session) for biometric sign-in,
   // or post-login for document signing.
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   let allowCredentials: { id: string; transports?: AuthenticatorTransportFuture[] }[] = [];
-  let userId: string | null = user?.id ?? null;
+  const userId: string | null = user?.id ?? null;
 
   // If already signed in, load their stored credential
   if (userId) {
@@ -37,20 +38,28 @@ export async function POST(req: NextRequest) {
     allowCredentials: allowCredentials.length > 0 ? allowCredentials : undefined,
   });
 
-  // Store challenge
   if (userId) {
+    // Logged-in flow: store challenge in the DB keyed to the user
     const service = await createServiceClient();
     await service.from("webauthn_challenges").insert({
       user_id: userId,
       challenge: options.challenge,
       type: "authentication",
     });
-  } else {
-    // Store in a temp cookie-based way — not needed for pre-login in this build
-    // For this implementation, fingerprint sign-in is only available post-login
-    return NextResponse.json({ error: "Must be signed in to use fingerprint" }, { status: 401 });
+    return NextResponse.json(options);
   }
 
-  void req; // suppress unused param warning
-  return NextResponse.json(options);
+  // Pre-login flow: no user yet, so store the challenge in a short-lived
+  // httpOnly cookie. verify-authentication reads it back and identifies the
+  // user by the credential ID the authenticator returns.
+  void req;
+  const res = NextResponse.json(options);
+  res.cookies.set(CHALLENGE_COOKIE, options.challenge, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 300,
+    path: "/",
+  });
+  return res;
 }

@@ -4,42 +4,77 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 
 const RP_ID = process.env.NEXT_PUBLIC_WEBAUTHN_RP_ID ?? "localhost";
 const ORIGIN = process.env.NEXT_PUBLIC_WEBAUTHN_ORIGIN ?? "http://localhost:3000";
+const CHALLENGE_COOKIE = "webauthn_login_challenge";
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
+  if (!body?.id || typeof body.id !== "string") {
+    return NextResponse.json({ error: "Invalid credential payload" }, { status: 400 });
+  }
+
   const service = await createServiceClient();
 
-  // Retrieve challenge
-  const { data: challengeRow } = await service
-    .from("webauthn_challenges")
-    .select("challenge")
-    .eq("user_id", user.id)
-    .eq("type", "authentication")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+  let expectedChallenge: string | null = null;
+  let profile: {
+    id: string;
+    webauthn_credential_id: string | null;
+    webauthn_public_key: string | null;
+    webauthn_counter: number | null;
+    webauthn_transports: string[] | null;
+  } | null = null;
 
-  if (!challengeRow) return NextResponse.json({ error: "No pending challenge" }, { status: 400 });
+  if (user) {
+    // Logged-in flow (e.g. document signing): challenge lives in the DB
+    const { data: challengeRow } = await service
+      .from("webauthn_challenges")
+      .select("challenge")
+      .eq("user_id", user.id)
+      .eq("type", "authentication")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
 
-  await service
-    .from("webauthn_challenges")
-    .delete()
-    .eq("user_id", user.id)
-    .eq("type", "authentication");
+    if (!challengeRow) {
+      return NextResponse.json({ error: "No pending challenge" }, { status: 400 });
+    }
+    expectedChallenge = challengeRow.challenge;
 
-  // Load stored credential
-  const { data: profile } = await service
-    .from("profiles")
-    .select("webauthn_credential_id, webauthn_public_key, webauthn_counter, webauthn_transports")
-    .eq("id", user.id)
-    .single();
+    await service
+      .from("webauthn_challenges")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("type", "authentication");
+
+    const { data } = await service
+      .from("profiles")
+      .select("id, webauthn_credential_id, webauthn_public_key, webauthn_counter, webauthn_transports")
+      .eq("id", user.id)
+      .single();
+    profile = data;
+  } else {
+    // Pre-login flow: challenge was set as an httpOnly cookie by auth-options.
+    // Identify the user by the credential ID the authenticator returned.
+    expectedChallenge = req.cookies.get(CHALLENGE_COOKIE)?.value ?? null;
+    if (!expectedChallenge) {
+      return NextResponse.json({ error: "No pending challenge" }, { status: 400 });
+    }
+
+    const { data } = await service
+      .from("profiles")
+      .select("id, webauthn_credential_id, webauthn_public_key, webauthn_counter, webauthn_transports")
+      .eq("webauthn_credential_id", body.id)
+      .single();
+    profile = data;
+  }
 
   if (!profile?.webauthn_credential_id || !profile?.webauthn_public_key) {
     return NextResponse.json({ error: "No registered credential" }, { status: 400 });
+  }
+  if (!expectedChallenge) {
+    return NextResponse.json({ error: "No pending challenge" }, { status: 400 });
   }
 
   try {
@@ -47,7 +82,7 @@ export async function POST(req: NextRequest) {
 
     const verification = await verifyAuthenticationResponse({
       response: body,
-      expectedChallenge: challengeRow.challenge,
+      expectedChallenge,
       expectedOrigin: ORIGIN,
       expectedRPID: RP_ID,
       requireUserVerification: true,
@@ -67,9 +102,12 @@ export async function POST(req: NextRequest) {
     await service
       .from("profiles")
       .update({ webauthn_counter: verification.authenticationInfo.newCounter })
-      .eq("id", user.id);
+      .eq("id", profile.id);
 
-    return NextResponse.json({ verified: true, userId: user.id });
+    const res = NextResponse.json({ verified: true, userId: profile.id });
+    // One-time use: clear the pre-login challenge cookie
+    res.cookies.set(CHALLENGE_COOKIE, "", { maxAge: 0, path: "/" });
+    return res;
   } catch (err: unknown) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Verification failed" },

@@ -7,7 +7,6 @@ interface Props {
   onFile: (file: File, textContent?: string) => void;
 }
 
-const ACCEPTED = [".txt", ".pdf", ".doc", ".docx", "text/plain", "application/pdf"];
 
 export default function DropZone({ onFile }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
